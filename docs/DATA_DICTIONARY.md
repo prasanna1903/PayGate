@@ -1,314 +1,487 @@
 # PayGate Data Dictionary
 
-This document describes the tables, columns, declared constraints, indexes, and
-relationships in [`backend/db/schema.sql`](../backend/db/schema.sql). It reflects
-the SQL schema; it does not add rules that are not encoded there.
+This dictionary describes the 21 operational tables in
+[`backend/db/schema.sql`](../backend/db/schema.sql). Column names, SQLite
+types, nullability, constraints, and indexes below describe that schema as
+implemented. Where Section 7 of the PayGate Final Implementation Blueprint
+specifies a requirement, it is identified as a **Blueprint requirement**.
+Details present in the SQL but not specified by Section 7 are identified as
+**Implementation detail**; they are not additional blueprint business rules.
 
-## Conventions
+## Conventions and scope
 
-- **Required** means the column is declared `NOT NULL`. **Nullable** means it
-  is not declared `NOT NULL`.
-- A column described as **PK** is declared as a primary key. SQLite has a
-  legacy behavior in ordinary rowid tables that may allow `NULL` in a
-  non-`INTEGER PRIMARY KEY` column unless it is also explicitly `NOT NULL`.
-  Most text ID primary keys in this schema do not say `NOT NULL`; their
-  practical nullability therefore requires clarification. `payroll_export_line`
-  uses `INTEGER PRIMARY KEY`, which is a SQLite rowid alias.
-- `FK` identifies a foreign key and its referenced column. Foreign-key
-  enforcement is enabled by the schema's `PRAGMA` for the connection executing
-  the script; connections opened elsewhere must enable it too.
-- `UNIQUE` and `CHECK` describe the schema constraints. Table defaults are
-  recorded where present.
-- Money amounts use `INTEGER` minor units (for example, cents or the
-  corresponding smallest currency unit), not floating-point major units. The
-  schema does not specify a currency or currency-specific minor-unit scale.
-- Calendar dates are stored as `TEXT` and checked against SQLite's `date()`
-  function in `YYYY-MM-DD` form. Timestamp columns are also `TEXT`, checked
-  using SQLite's `datetime()` function; the schema does not specify a timezone
-  convention or a single timestamp serialization format.
+- **Required** means the column is declared `NOT NULL`; **Nullable** means it
+  is not. All primary-key columns in the current schema are explicitly
+  `NOT NULL`.
+- A foreign key (FK) is enforced when the connection has SQLite foreign-key
+  enforcement enabled. The schema script issues `PRAGMA foreign_keys = ON`;
+  connections opened elsewhere must also enable it.
+- Dates are `TEXT` in ISO `YYYY-MM-DD` form. The schema checks date columns
+  with SQLite `date()` and requires the parsed value to equal the stored text.
+  Timestamp columns are `TEXT` checked with SQLite `datetime()` where
+  applicable; a timezone convention is not specified.
+- Money is stored as `INTEGER` minor units (for example, cents or the
+  applicable smallest currency unit), not floating-point major units. The
+  schema does not define a currency or its minor-unit scale. Hours and days
+  are represented as `REAL`.
+- `CHECK`, `UNIQUE`, defaults, and indexes below are the ones declared in the
+  current schema. A status column without a `CHECK` has no status-value
+  restriction in this schema; this dictionary does not invent one.
+- Ground-truth data is not part of the operational database schema.
 
 ## Tables and columns
 
-### `pay_group`
-
-| Column | Type | Nullability | Constraints | Business meaning |
-|---|---|---|---|---|
-| `pay_group_id` | TEXT | Nullable (PK caveat above) | PK | Identifier for the pay group. |
-| `name` | TEXT | Required | UNIQUE | Pay-group name. |
-| `pay_frequency` | TEXT | Required | CHECK: `weekly`, `biweekly`, `semimonthly`, or `monthly` | Pay frequency assigned to the group. |
-| `status` | TEXT | Required | Default `active`; CHECK: `active` or `inactive` | Pay-group status. |
-
 ### `employee`
 
-| Column | Type | Nullability | Constraints | Business meaning |
+Blueprint fields: `employee_id` PK; full name, employment type, pay group,
+hire/termination dates, base rate, optional bank and tax details, status, and
+effective dates.
+
+| Column | Type | Nullability | Keys and constraints | Meaning |
 |---|---|---|---|---|
-| `employee_id` | TEXT | Nullable (PK caveat above) | PK | Employee identifier. |
+| `employee_id` | TEXT | Required | PK | Stable employee identifier. |
+| `full_name` | TEXT | Required | — | Synthetic or otherwise approved display name for the employee. |
+| `employment_type` | TEXT | Required | CHECK: `hourly`, `salaried` | Employment classification. |
 | `pay_group_id` | TEXT | Required | FK → `pay_group.pay_group_id` | Employee's pay group. |
-| `first_name` | TEXT | Required | — | Employee's first name. |
-| `last_name` | TEXT | Required | — | Employee's last name. |
-| `hire_date` | TEXT | Required | CHECK: valid ISO calendar date | Employee hire date. |
-| `termination_date` | TEXT | Nullable | CHECK: null or valid ISO calendar date; if present, must be on or after `hire_date` | Employee termination date, if recorded. |
-| `employment_status` | TEXT | Required | Default `active`; CHECK: `active`, `inactive`, or `terminated` | Employment status. |
+| `hire_date` | TEXT | Required | Valid ISO date | Employment start date. |
+| `termination_date` | TEXT | Nullable | Valid ISO date if present; on or after `hire_date` | Termination date, if applicable. |
+| `base_rate_minor` | INTEGER | Required | CHECK: `>= 0` | Base compensation rate in minor units. The schema does not specify the rate's time basis. |
+| `bank_account` | TEXT | Nullable | — | Bank account detail. |
+| `bank_routing` | TEXT | Nullable | — | Bank routing detail. |
+| `tax_id` | TEXT | Nullable | — | Tax identifier. |
+| `status` | TEXT | Required | CHECK: `active`, `inactive`, `terminated` | Employee status. |
+| `effective_from` | TEXT | Required | Valid ISO date | Start of the effective-dated employee record. |
+| `effective_to` | TEXT | Nullable | Valid ISO date if present; on or after `effective_from` | End of the effective-dated employee record, if any. |
+
+### `pay_group`
+
+Blueprint fields: `pay_group_id` PK, name, pay frequency, period/day hour
+limits, and overtime multiplier.
+
+| Column | Type | Nullability | Keys and constraints | Meaning |
+|---|---|---|---|---|
+| `pay_group_id` | TEXT | Required | PK | Pay-group identifier. |
+| `name` | TEXT | Required | UNIQUE | Pay-group name. |
+| `pay_frequency` | TEXT | Required | CHECK: `weekly`, `biweekly`, `semimonthly`, `monthly` | Pay frequency. |
+| `max_hours_per_period` | REAL | Required | CHECK: `> 0` | Configured period-hour threshold. |
+| `max_hours_per_day` | REAL | Required | CHECK: `> 0` | Configured daily-hour threshold. |
+| `ot_multiplier` | REAL | Required | CHECK: `>= 1` | Overtime multiplier. |
+
+The name uniqueness and the listed value/range checks are implementation
+details; Section 7 does not prescribe their exact values.
 
 ### `pay_period`
 
-| Column | Type | Nullability | Constraints | Business meaning |
+Blueprint fields: `period_id` PK, start and end dates, and status.
+
+| Column | Type | Nullability | Keys and constraints | Meaning |
 |---|---|---|---|---|
-| `pay_period_id` | TEXT | Nullable (PK caveat above) | PK | Pay-period identifier. |
-| `start_date` | TEXT | Required | CHECK: valid ISO calendar date | First date of the pay period. |
-| `end_date` | TEXT | Required | CHECK: valid ISO calendar date; on or after `start_date` | Last date of the pay period. |
-| `pay_date` | TEXT | Required | CHECK: valid ISO calendar date | Scheduled pay date. |
-| `status` | TEXT | Required | Default `open`; CHECK: `open`, `closed`, or `exported` | Pay-period status. |
+| `period_id` | TEXT | Required | PK | Pay-period identifier. |
+| `start_date` | TEXT | Required | Valid ISO date | First date of the period. |
+| `end_date` | TEXT | Required | Valid ISO date; on or after `start_date` | Last date of the period. |
+| `status` | TEXT | Required | No status-value CHECK in this schema | Pay-period status; allowed values require clarification. |
 
 ### `paygroup_period_calendar`
 
-| Column | Type | Nullability | Constraints | Business meaning |
-|---|---|---|---|---|
-| `pay_group_id` | TEXT | Required | FK → `pay_group.pay_group_id`; part of composite PK | Pay group in this calendar entry. |
-| `pay_period_id` | TEXT | Required | FK → `pay_period.pay_period_id`; part of composite PK | Pay period in this calendar entry. |
-| `submission_deadline` | TEXT | Nullable | CHECK: null or valid ISO calendar date | Submission deadline for this pay-group/pay-period pair. |
+Blueprint requirement: a pay-group/pay-period N:M bridge, with composite PK
+and cutoff and pay dates. The schema also has a `status` column; Section 7
+does not enumerate calendar status values.
 
-The composite primary key is (`pay_group_id`, `pay_period_id`).
+| Column | Type | Nullability | Keys and constraints | Meaning |
+|---|---|---|---|---|
+| `pay_group_id` | TEXT | Required | FK → `pay_group.pay_group_id`; part of composite PK | Pay group for this calendar record. |
+| `period_id` | TEXT | Required | FK → `pay_period.period_id`; part of composite PK | Pay period for this calendar record. |
+| `cutoff_date` | TEXT | Required | Valid ISO date | Cutoff date for the pay-group period. |
+| `pay_date` | TEXT | Required | Valid ISO date | Scheduled pay date. |
+| `status` | TEXT | Required | No status-value CHECK in this schema | Calendar-record status; allowed values require clarification. |
+
+Composite PK: (`pay_group_id`, `period_id`).
 
 ### `leave_record`
 
-| Column | Type | Nullability | Constraints | Business meaning |
+Blueprint fields: leave identifier, employee and period FKs, leave details,
+dates, days, paid flag, and status.
+
+| Column | Type | Nullability | Keys and constraints | Meaning |
 |---|---|---|---|---|
-| `leave_id` | TEXT | Nullable (PK caveat above) | PK | Leave-record identifier. |
-| `employee_id` | TEXT | Required | FK → `employee.employee_id` | Employee associated with the leave. |
-| `leave_type` | TEXT | Required | — | Leave category; allowed values are not specified in the schema. |
-| `start_date` | TEXT | Required | CHECK: valid ISO calendar date | First date of leave. |
-| `end_date` | TEXT | Required | CHECK: valid ISO calendar date; on or after `start_date` | Last date of leave. |
-| `status` | TEXT | Required | Default `pending`; CHECK: `pending`, `approved`, `rejected`, or `cancelled` | Leave-record status. |
+| `leave_id` | TEXT | Required | PK | Leave-record identifier. |
+| `employee_id` | TEXT | Required | FK → `employee.employee_id` | Employee associated with leave. |
+| `period_id` | TEXT | Required | FK → `pay_period.period_id` | Pay period associated with leave. |
+| `leave_type` | TEXT | Required | — | Leave category; values are not specified by Section 7 or constrained in this schema. |
+| `start_date` | TEXT | Required | Valid ISO date | First date of leave. |
+| `end_date` | TEXT | Required | Valid ISO date; on or after `start_date` | Last date of leave. |
+| `days` | REAL | Required | CHECK: `> 0` | Number of leave days. |
+| `paid_flag` | INTEGER | Required | CHECK: `0` or `1` | Whether the leave is paid. |
+| `status` | TEXT | Required | No status-value CHECK in this schema | Leave status; allowed values require clarification. |
 
 ### `time_entry`
 
-| Column | Type | Nullability | Constraints | Business meaning |
-|---|---|---|---|---|
-| `time_entry_id` | TEXT | Nullable (PK caveat above) | PK | Time-entry identifier. |
-| `employee_id` | TEXT | Required | FK → `employee.employee_id` | Employee who worked the recorded time. |
-| `work_date` | TEXT | Required | CHECK: valid ISO calendar date | Date the work was performed. |
-| `worked_minutes` | INTEGER | Required | CHECK: `>= 0` | Number of minutes recorded. |
-| `status` | TEXT | Required | Default `submitted`; CHECK: `submitted`, `approved`, `rejected`, or `void` | Time-entry status. |
+Blueprint lifecycle: `DRAFT` → `SUBMITTED` → `APPROVED` or `REJECTED`;
+`APPROVED` → `SUPERSEDED` on correction. The schema constrains the status
+value set but does not enforce transitions between values.
 
-The table also declares `UNIQUE (employee_id, work_date, time_entry_id)`. Since
-`time_entry_id` is the primary key, this does not add a stronger uniqueness
-rule than the primary key when IDs are non-null.
+| Column | Type | Nullability | Keys and constraints | Meaning |
+|---|---|---|---|---|
+| `time_entry_id` | TEXT | Required | PK | Time-entry identifier. |
+| `employee_id` | TEXT | Required | FK → `employee.employee_id` | Employee who worked the recorded time. |
+| `period_id` | TEXT | Required | FK → `pay_period.period_id` | Pay period containing the entry. |
+| `work_date` | TEXT | Required | Valid ISO date | Date worked. |
+| `hours` | REAL | Required | CHECK: `>= 0` | Hours recorded. |
+| `entry_type` | TEXT | Required | — | Entry category; allowed values are not specified. |
+| `status` | TEXT | Required | CHECK: `DRAFT`, `SUBMITTED`, `APPROVED`, `REJECTED`, `SUPERSEDED` | Time-entry lifecycle status. |
+| `submission_seq` | INTEGER | Required | CHECK: `>= 1` | Sequence number for a submission. |
+| `supersedes_id` | TEXT | Nullable | FK → `time_entry.time_entry_id` | Prior entry replaced by this correction, if any. |
+| `submitted_at` | TEXT | Nullable | SQLite `datetime()` accepted if present | Submission timestamp. |
+| `approved_by` | TEXT | Nullable | — | Identifier of the approver; no FK target is specified. |
 
 ### `allowance_type`
 
-| Column | Type | Nullability | Constraints | Business meaning |
+Section 7 specifies this as a catalog but does not list its columns. These
+columns are implementation details from the current schema.
+
+| Column | Type | Nullability | Keys and constraints | Meaning |
 |---|---|---|---|---|
-| `allowance_type_id` | TEXT | Nullable (PK caveat above) | PK | Allowance-type identifier. |
+| `allowance_type_id` | TEXT | Required | PK | Allowance-type identifier. |
 | `name` | TEXT | Required | UNIQUE | Allowance-type name. |
-| `default_amount_minor` | INTEGER | Nullable | CHECK: null or `>= 0` | Optional default allowance amount in minor currency units. |
-| `status` | TEXT | Required | Default `active`; CHECK: `active` or `inactive` | Allowance-type status. |
+| `default_amount_minor` | INTEGER | Nullable | CHECK: null or `>= 0` | Optional default amount in minor units. |
+| `status` | TEXT | Required | Default `active`; CHECK: `active`, `inactive` | Catalog-record status. |
 
 ### `deduction_type`
 
-| Column | Type | Nullability | Constraints | Business meaning |
+Section 7 specifies this as a catalog but does not list its columns. These
+columns are implementation details from the current schema.
+
+| Column | Type | Nullability | Keys and constraints | Meaning |
 |---|---|---|---|---|
-| `deduction_type_id` | TEXT | Nullable (PK caveat above) | PK | Deduction-type identifier. |
+| `deduction_type_id` | TEXT | Required | PK | Deduction-type identifier. |
 | `name` | TEXT | Required | UNIQUE | Deduction-type name. |
-| `default_amount_minor` | INTEGER | Nullable | CHECK: null or `>= 0` | Optional default deduction amount in minor currency units. |
-| `status` | TEXT | Required | Default `active`; CHECK: `active` or `inactive` | Deduction-type status. |
+| `default_amount_minor` | INTEGER | Nullable | CHECK: null or `>= 0` | Optional default amount in minor units. |
+| `status` | TEXT | Required | Default `active`; CHECK: `active`, `inactive` | Catalog-record status. |
 
 ### `employee_allowance_eligibility`
 
-| Column | Type | Nullability | Constraints | Business meaning |
-|---|---|---|---|---|
-| `employee_id` | TEXT | Required | FK → `employee.employee_id`; part of composite PK | Employee covered by this eligibility record. |
-| `allowance_type_id` | TEXT | Required | FK → `allowance_type.allowance_type_id`; part of composite PK | Allowance type for which the employee is eligible. |
-| `effective_from` | TEXT | Required | CHECK: valid ISO calendar date; part of composite PK | First effective date of eligibility. |
-| `effective_to` | TEXT | Nullable | CHECK: null or valid ISO calendar date; if present, on or after `effective_from` | Last effective date, if one is recorded. |
+Blueprint requirement: an employee-to-allowance-type bridge with effective
+dates. The schema defines a composite primary key as an implementation choice.
 
-The composite primary key is (`employee_id`, `allowance_type_id`,
-`effective_from`).
+| Column | Type | Nullability | Keys and constraints | Meaning |
+|---|---|---|---|---|
+| `employee_id` | TEXT | Required | FK → `employee.employee_id`; part of composite PK | Employee covered by the eligibility record. |
+| `allowance_type_id` | TEXT | Required | FK → `allowance_type.allowance_type_id`; part of composite PK | Allowance type covered by the record. |
+| `effective_from` | TEXT | Required | Valid ISO date; part of composite PK | First effective date. |
+| `effective_to` | TEXT | Nullable | Valid ISO date if present; on or after `effective_from` | Last effective date, if any. |
+
+Composite PK: (`employee_id`, `allowance_type_id`, `effective_from`).
 
 ### `employee_deduction_enrollment`
 
-| Column | Type | Nullability | Constraints | Business meaning |
-|---|---|---|---|---|
-| `employee_id` | TEXT | Required | FK → `employee.employee_id`; part of composite PK | Employee covered by this enrollment record. |
-| `deduction_type_id` | TEXT | Required | FK → `deduction_type.deduction_type_id`; part of composite PK | Deduction type in which the employee is enrolled. |
-| `effective_from` | TEXT | Required | CHECK: valid ISO calendar date; part of composite PK | First effective date of enrollment. |
-| `effective_to` | TEXT | Nullable | CHECK: null or valid ISO calendar date; if present, on or after `effective_from` | Last effective date, if one is recorded. |
+Blueprint requirement: an employee-to-deduction-type bridge with effective
+dates. The schema defines a composite primary key as an implementation choice.
 
-The composite primary key is (`employee_id`, `deduction_type_id`,
-`effective_from`).
+| Column | Type | Nullability | Keys and constraints | Meaning |
+|---|---|---|---|---|
+| `employee_id` | TEXT | Required | FK → `employee.employee_id`; part of composite PK | Employee covered by the enrollment record. |
+| `deduction_type_id` | TEXT | Required | FK → `deduction_type.deduction_type_id`; part of composite PK | Deduction type covered by the record. |
+| `effective_from` | TEXT | Required | Valid ISO date; part of composite PK | First effective date. |
+| `effective_to` | TEXT | Nullable | Valid ISO date if present; on or after `effective_from` | Last effective date, if any. |
+
+Composite PK: (`employee_id`, `deduction_type_id`, `effective_from`).
 
 ### `allowance`
 
-| Column | Type | Nullability | Constraints | Business meaning |
+Blueprint fields: allowance identifier, employee/period/type FKs, amount, and
+status.
+
+| Column | Type | Nullability | Keys and constraints | Meaning |
 |---|---|---|---|---|
-| `allowance_id` | TEXT | Nullable (PK caveat above) | PK | Allowance-record identifier. |
+| `allowance_id` | TEXT | Required | PK | Allowance-record identifier. |
 | `employee_id` | TEXT | Required | FK → `employee.employee_id` | Employee receiving the allowance. |
+| `period_id` | TEXT | Required | FK → `pay_period.period_id` | Pay period associated with the allowance. |
 | `allowance_type_id` | TEXT | Required | FK → `allowance_type.allowance_type_id` | Allowance category. |
-| `pay_period_id` | TEXT | Required | FK → `pay_period.pay_period_id` | Pay period to which the allowance applies. |
-| `amount_minor` | INTEGER | Required | CHECK: `>= 0` | Allowance amount in minor currency units. |
-| `status` | TEXT | Required | Default `pending`; CHECK: `pending`, `approved`, `rejected`, or `paid` | Allowance status. |
+| `amount_minor` | INTEGER | Required | CHECK: `>= 0` | Allowance amount in minor units. |
+| `status` | TEXT | Required | No status-value CHECK in this schema | Allowance status; allowed values require clarification. |
 
 ### `deduction`
 
-| Column | Type | Nullability | Constraints | Business meaning |
+Blueprint fields: deduction identifier, employee/period/type FKs, amount,
+optional source leave FK, and status.
+
+| Column | Type | Nullability | Keys and constraints | Meaning |
 |---|---|---|---|---|
-| `deduction_id` | TEXT | Nullable (PK caveat above) | PK | Deduction-record identifier. |
-| `employee_id` | TEXT | Required | FK → `employee.employee_id` | Employee subject to the deduction. |
+| `deduction_id` | TEXT | Required | PK | Deduction-record identifier. |
+| `employee_id` | TEXT | Required | FK → `employee.employee_id` | Employee for whom the deduction is recorded. |
+| `period_id` | TEXT | Required | FK → `pay_period.period_id` | Pay period associated with the deduction. |
 | `deduction_type_id` | TEXT | Required | FK → `deduction_type.deduction_type_id` | Deduction category. |
-| `pay_period_id` | TEXT | Required | FK → `pay_period.pay_period_id` | Pay period to which the deduction applies. |
-| `amount_minor` | INTEGER | Required | CHECK: `>= 0` | Deduction amount in minor currency units. |
-| `status` | TEXT | Required | Default `pending`; CHECK: `pending`, `approved`, `rejected`, or `paid` | Deduction status. |
+| `amount_minor` | INTEGER | Required | CHECK: `>= 0` | Deduction amount in minor units. |
+| `source_leave_id` | TEXT | Nullable | FK → `leave_record.leave_id` | Leave record that sourced this deduction, if applicable. |
+| `status` | TEXT | Required | No status-value CHECK in this schema | Deduction status; allowed values require clarification. |
 
 ### `payroll_input`
 
-| Column | Type | Nullability | Constraints | Business meaning |
+Blueprint fields include employee and period FKs, hours and monetary totals,
+status and input hash, with one input per employee and period. The blueprint
+lifecycles are `AGGREGATED` → `VALIDATED` or `BLOCKED` → `APPROVED` →
+`EXPORTED`. The schema permits these status values but does not enforce
+transitions.
+
+| Column | Type | Nullability | Keys and constraints | Meaning |
 |---|---|---|---|---|
-| `payroll_input_id` | TEXT | Nullable (PK caveat above) | PK | Payroll-input identifier. |
-| `employee_id` | TEXT | Required | FK → `employee.employee_id` | Employee to whom the input applies. |
-| `pay_period_id` | TEXT | Required | FK → `pay_period.pay_period_id` | Pay period for the input. |
-| `input_type` | TEXT | Required | — | Input category; allowed values and relationship to source types require clarification. |
-| `amount_minor` | INTEGER | Required | — | Input amount in minor currency units. The schema does not constrain its sign. |
-| `status` | TEXT | Required | Default `pending`; CHECK: `pending`, `validated`, `blocked`, or `exported` | Payroll-input status. |
+| `payroll_input_id` | TEXT | Required | PK | Payroll-input identifier. |
+| `employee_id` | TEXT | Required | FK → `employee.employee_id`; UNIQUE with `period_id` | Employee for whom payroll is prepared. |
+| `period_id` | TEXT | Required | FK → `pay_period.period_id`; UNIQUE with `employee_id` | Pay period for this input. |
+| `regular_hours` | REAL | Required | CHECK: `>= 0` | Aggregated regular hours. |
+| `ot_hours` | REAL | Required | CHECK: `>= 0` | Aggregated overtime hours. |
+| `gross_minor` | INTEGER | Required | — | Gross amount in minor units. |
+| `deductions_minor` | INTEGER | Required | — | Deduction total in minor units. |
+| `net_minor` | INTEGER | Required | — | Net amount in minor units. |
+| `status` | TEXT | Required | CHECK: `AGGREGATED`, `VALIDATED`, `BLOCKED`, `APPROVED`, `EXPORTED` | Payroll-input lifecycle status. |
+| `input_hash` | TEXT | Required | — | Hash associated with the payroll input; algorithm and contents are not specified here. |
+
+Table constraint: `UNIQUE (employee_id, period_id)`.
 
 ### `payroll_input_source`
 
-| Column | Type | Nullability | Constraints | Business meaning |
-|---|---|---|---|---|
-| `payroll_input_id` | TEXT | Required | FK → `payroll_input.payroll_input_id` | Payroll input linked to a source record. |
-| `time_entry_id` | TEXT | Nullable | FK → `time_entry.time_entry_id`; partial UNIQUE with `payroll_input_id` when non-null | Linked time entry, if this is the source. |
-| `leave_id` | TEXT | Nullable | FK → `leave_record.leave_id`; partial UNIQUE with `payroll_input_id` when non-null | Linked leave record, if this is the source. |
-| `allowance_id` | TEXT | Nullable | FK → `allowance.allowance_id`; partial UNIQUE with `payroll_input_id` when non-null | Linked allowance, if this is the source. |
-| `deduction_id` | TEXT | Nullable | FK → `deduction.deduction_id`; partial UNIQUE with `payroll_input_id` when non-null | Linked deduction, if this is the source. |
+Blueprint requirement: generic N:M traceability bridge between payroll inputs
+and source records. Unlike a table with one nullable FK per source kind, this
+schema stores the source category and its ID in a single pair of columns.
 
-A table-level CHECK requires exactly one of `time_entry_id`, `leave_id`,
-`allowance_id`, or `deduction_id` to be non-null. Four partial unique indexes
-prevent the same source ID of a given type from being linked to the same
-payroll input more than once. The table declares no primary key.
+| Column | Type | Nullability | Keys and constraints | Meaning |
+|---|---|---|---|---|
+| `payroll_input_id` | TEXT | Required | FK → `payroll_input.payroll_input_id`; part of composite PK | Payroll input using the source record. |
+| `source_type` | TEXT | Required | CHECK: `time_entry`, `leave_record`, `allowance`, `deduction`; part of composite PK | Kind of source record. |
+| `source_id` | TEXT | Required | Part of composite PK; no FK in this schema | Identifier of the source row. |
+
+Composite PK: (`payroll_input_id`, `source_type`, `source_id`). This prevents
+linking the same typed source record to the same payroll input more than once.
+`source_id` has no declared FK because one generic column cannot reference
+several source tables using ordinary SQLite foreign keys. Therefore the
+database does not itself verify that each source ID exists or matches its
+declared type; that integrity must be checked by application logic or tests.
 
 ### `validation_rule`
 
-| Column | Type | Nullability | Constraints | Business meaning |
+Blueprint fields: rule identifier, name, severity, blocking flag, parameters,
+version, and active flag.
+
+| Column | Type | Nullability | Keys and constraints | Meaning |
 |---|---|---|---|---|
-| `validation_rule_id` | TEXT | Nullable (PK caveat above) | PK | Validation-rule identifier. |
-| `rule_code` | TEXT | Required | UNIQUE | Stable code for the rule. |
-| `name` | TEXT | Required | — | Validation-rule name. |
-| `description` | TEXT | Required | — | Human-readable description of the rule. |
-| `severity` | TEXT | Required | CHECK: `low`, `medium`, `high`, or `critical` | Severity assigned to the rule. |
-| `status` | TEXT | Required | Default `active`; CHECK: `active` or `inactive` | Validation-rule status. |
+| `rule_id` | TEXT | Required | PK | Validation-rule identifier. |
+| `name` | TEXT | Required | — | Rule name. |
+| `severity` | TEXT | Required | CHECK: `High`, `Medium`, `Critical` | Rule severity. |
+| `blocking_flag` | INTEGER | Required | CHECK: `0` or `1` | Whether the rule is configured to block. |
+| `params_json` | TEXT | Required | CHECK: valid JSON | Rule parameters encoded as JSON. |
+| `version` | INTEGER | Required | CHECK: `>= 1` | Rule version number. |
+| `active` | INTEGER | Required | CHECK: `0` or `1` | Whether the rule is active. |
+
+The schema's severity spelling/capitalization and allowed set are
+implementation details; Section 7 does not enumerate rule severity values.
 
 ### `validation_run`
 
-| Column | Type | Nullability | Constraints | Business meaning |
+Blueprint fields: run identifier, start time, rule versions, parameters, and
+trigger.
+
+| Column | Type | Nullability | Keys and constraints | Meaning |
 |---|---|---|---|---|
-| `validation_run_id` | TEXT | Nullable (PK caveat above) | PK | Validation-run identifier. |
-| `pay_period_id` | TEXT | Required | FK → `pay_period.pay_period_id` | Pay period validated by this run. |
-| `status` | TEXT | Required | Default `pending`; CHECK: `pending`, `running`, `completed`, or `failed` | Validation-run status. |
-| `started_at` | TEXT | Nullable | CHECK: null or accepted by SQLite `datetime()` | Run start timestamp. |
-| `completed_at` | TEXT | Nullable | CHECK: null or accepted by SQLite `datetime()` | Run completion timestamp. |
+| `run_id` | TEXT | Required | PK | Validation-run identifier. |
+| `started_at` | TEXT | Required | SQLite `datetime()` accepted | Run start timestamp. |
+| `rule_versions_json` | TEXT | Required | CHECK: valid JSON | Rule versions used by the run. |
+| `params_json` | TEXT | Required | CHECK: valid JSON | Parameters used by the run. |
+| `trigger` | TEXT | Required | — | Trigger or cause of the run. |
+
+The column name `trigger` is quoted in SQL because it is also a SQL keyword.
 
 ### `exception`
 
-| Column | Type | Nullability | Constraints | Business meaning |
+Blueprint fields: run and rule references, entity details, optional employee
+and period, severity, status, evidence, and creation time. The schema also
+supports a nullable approval link for waiver handling.
+
+| Column | Type | Nullability | Keys and constraints | Meaning |
 |---|---|---|---|---|
-| `exception_id` | TEXT | Nullable (PK caveat above) | PK | Exception identifier. |
-| `validation_run_id` | TEXT | Required | FK → `validation_run.validation_run_id` | Validation run that produced the exception. |
-| `payroll_input_id` | TEXT | Nullable | FK → `payroll_input.payroll_input_id` | Payroll input associated with the exception, if recorded. |
-| `validation_rule_id` | TEXT | Required | FK → `validation_rule.validation_rule_id` | Rule associated with the exception. |
-| `message` | TEXT | Required | — | Exception details. |
-| `severity` | TEXT | Required | CHECK: `low`, `medium`, `high`, or `critical` | Exception severity. |
-| `status` | TEXT | Required | Default `open`; CHECK: `open`, `resolved`, or `waived` | Exception status. |
+| `exception_id` | TEXT | Required | PK | Exception identifier. |
+| `run_id` | TEXT | Required | FK → `validation_run.run_id` | Validation run that produced the exception. |
+| `rule_id` | TEXT | Required | FK → `validation_rule.rule_id` | Rule associated with the exception. |
+| `entity_type` | TEXT | Required | — | Type of entity involved. |
+| `entity_id` | TEXT | Required | — | Identifier of the entity involved. |
+| `employee_id` | TEXT | Nullable | FK → `employee.employee_id` | Related employee, if applicable. |
+| `period_id` | TEXT | Nullable | FK → `pay_period.period_id` | Related pay period, if applicable. |
+| `severity` | TEXT | Required | CHECK: `High`, `Medium`, `Critical` | Exception severity. |
+| `status` | TEXT | Required | CHECK: `OPEN`, `ACKNOWLEDGED`, `RESOLVED`, `WAIVED`, `SUPERSEDED` | Exception lifecycle status. |
+| `evidence_json` | TEXT | Required | CHECK: valid JSON | Evidence for the finding, encoded as JSON. |
+| `created_at` | TEXT | Required | SQLite `datetime()` accepted | Exception creation timestamp. |
+| `approval_id` | TEXT | Nullable | FK → `approval.approval_id` | Related approval, if any; the schema does not enforce that it is specifically a waiver. |
+
+Blueprint lifecycle: `OPEN` → `ACKNOWLEDGED` → `RESOLVED` or `WAIVED`;
+`OPEN` → `SUPERSEDED` on rerun. The schema constrains values but does not
+enforce transitions.
 
 ### `approval`
 
-| Column | Type | Nullability | Constraints | Business meaning |
+Blueprint fields: approval identifier, target details, approver role and
+identity, decision, comment, and decision time. `target_type` and `target_id`
+form a polymorphic target; no FK to the target entity is declared.
+
+| Column | Type | Nullability | Keys and constraints | Meaning |
 |---|---|---|---|---|
-| `approval_id` | TEXT | Nullable (PK caveat above) | PK | Approval-record identifier. |
-| `pay_period_id` | TEXT | Required | FK → `pay_period.pay_period_id` | Pay period being approved. |
-| `validation_run_id` | TEXT | Nullable | FK → `validation_run.validation_run_id` | Associated validation run, if recorded. |
-| `approver` | TEXT | Nullable | — | Approver identity; representation is not specified. |
-| `status` | TEXT | Required | Default `pending`; CHECK: `pending`, `approved`, or `rejected` | Approval status. |
-| `decided_at` | TEXT | Nullable | CHECK: null or accepted by SQLite `datetime()` | Time the approval decision was recorded. |
+| `approval_id` | TEXT | Required | PK | Approval identifier. |
+| `target_type` | TEXT | Required | — | Type of entity being approved. |
+| `target_id` | TEXT | Required | — | Identifier of the target entity; no FK is declared. |
+| `approver_role` | TEXT | Required | — | Role of the approver. |
+| `approver_id` | TEXT | Required | — | Approver identifier; no FK target is specified. |
+| `decision` | TEXT | Required | CHECK: `APPROVED`, `REJECTED`, `WAIVED` | Approval decision. |
+| `comment` | TEXT | Required | — | Comment associated with the decision. |
+| `decided_at` | TEXT | Required | SQLite `datetime()` accepted | Decision timestamp. |
+
+The decision values are implementation details; Section 7 does not list the
+allowed values.
 
 ### `payroll_export`
 
-| Column | Type | Nullability | Constraints | Business meaning |
+Blueprint lifecycle: `CREATED` → `RELEASED`. The schema checks those values
+but does not enforce transitions.
+
+| Column | Type | Nullability | Keys and constraints | Meaning |
 |---|---|---|---|---|
-| `payroll_export_id` | TEXT | Nullable (PK caveat above) | PK | Payroll-export identifier. |
-| `pay_period_id` | TEXT | Required | FK → `pay_period.pay_period_id` | Pay period represented by the export. |
-| `approval_id` | TEXT | Nullable | FK → `approval.approval_id` | Associated approval, if recorded. |
-| `status` | TEXT | Required | Default `draft`; CHECK: `draft`, `ready`, `exported`, or `failed` | Payroll-export status. |
-| `created_at` | TEXT | Required | CHECK: accepted by SQLite `datetime()` | Export-record creation timestamp. |
-| `exported_at` | TEXT | Nullable | CHECK: null or accepted by SQLite `datetime()` | Export completion timestamp, if recorded. |
+| `export_id` | TEXT | Required | PK | Payroll-export identifier. |
+| `pay_group_id` | TEXT | Required | FK → `pay_group.pay_group_id` | Pay group included in the export. |
+| `period_id` | TEXT | Required | FK → `pay_period.period_id` | Pay period included in the export. |
+| `status` | TEXT | Required | CHECK: `CREATED`, `RELEASED` | Export lifecycle status. |
+| `line_count` | INTEGER | Required | CHECK: `>= 0` | Number of export lines. |
+| `total_net_minor` | INTEGER | Required | — | Export net total in minor units. |
+| `created_at` | TEXT | Required | SQLite `datetime()` accepted | Export creation timestamp. |
 
 ### `payroll_export_line`
 
-| Column | Type | Nullability | Constraints | Business meaning |
-|---|---|---|---|---|
-| `payroll_export_line_id` | INTEGER | Required | PK (`INTEGER PRIMARY KEY`) | Row identifier for an export line. |
-| `payroll_export_id` | TEXT | Required | FK → `payroll_export.payroll_export_id` | Export containing this line. |
-| `payroll_input_id` | TEXT | Required | FK → `payroll_input.payroll_input_id`; UNIQUE with `payroll_export_id` | Payroll input represented by the line. |
-| `employee_id` | TEXT | Required | FK → `employee.employee_id` | Employee represented by the line. |
-| `gross_amount_minor` | INTEGER | Required | — | Gross amount in minor currency units. |
-| `deduction_amount_minor` | INTEGER | Required | CHECK: `>= 0` | Deduction amount in minor currency units. |
-| `net_amount_minor` | INTEGER | Required | — | Net amount in minor currency units. |
+Blueprint fields: export and payroll-input references, and the amount.
 
-The table also declares `UNIQUE (payroll_export_id, payroll_input_id)`.
+| Column | Type | Nullability | Keys and constraints | Meaning |
+|---|---|---|---|---|
+| `export_id` | TEXT | Required | FK → `payroll_export.export_id`; part of composite PK | Export containing this line. |
+| `payroll_input_id` | TEXT | Required | FK → `payroll_input.payroll_input_id`; part of composite PK | Payroll input represented by this line. |
+| `amount_minor` | INTEGER | Required | — | Line amount in minor units. |
+
+Composite PK: (`export_id`, `payroll_input_id`), an implementation detail
+that also prevents the same input from appearing twice in one export.
 
 ### `state_event`
 
-| Column | Type | Nullability | Constraints | Business meaning |
+Blueprint requirement: append-only state history. The SQL enforces append-only
+behavior with triggers that reject `UPDATE` and `DELETE`.
+
+| Column | Type | Nullability | Keys and constraints | Meaning |
 |---|---|---|---|---|
-| `state_event_id` | TEXT | Nullable (PK caveat above) | PK | State-event identifier. |
-| `entity_type` | TEXT | Required | — | Type of entity whose state changed; allowed values are not specified. |
-| `entity_id` | TEXT | Required | — | Identifier of the entity whose state changed. |
-| `previous_state` | TEXT | Nullable | — | State before the event, if recorded. |
-| `new_state` | TEXT | Required | — | State after the event. |
-| `actor` | TEXT | Nullable | — | Actor associated with the event; representation is not specified. |
-| `occurred_at` | TEXT | Required | CHECK: accepted by SQLite `datetime()` | Event timestamp. |
+| `event_id` | TEXT | Required | PK | State-event identifier. |
+| `entity_type` | TEXT | Required | — | Type of entity whose state changed. Allowed values are not specified. |
+| `entity_id` | TEXT | Required | — | Identifier of the entity whose state changed; no FK is declared. |
+| `from_state` | TEXT | Nullable | — | State before the event, if any. |
+| `to_state` | TEXT | Required | — | State after the event. |
+| `actor` | TEXT | Required | — | Actor associated with the change. |
+| `reason` | TEXT | Required | — | Reason for the change. |
+| `occurred_at` | TEXT | Required | SQLite `datetime()` accepted | Event timestamp. |
 
-`state_event` has triggers that reject `UPDATE` and `DELETE`, preserving the
-table as append-only history through ordinary SQL operations.
+## Relationships and cardinalities
 
-## Relationships
+The cardinalities below follow Section 7 and the declared foreign keys. A
+bridge table's composite key prevents duplicate pairs where stated.
 
-- A `pay_group` has many `employee` records. `employee.pay_group_id` references
+- **PayGroup 1:N Employee**: `employee.pay_group_id` references
   `pay_group.pay_group_id`.
-- `paygroup_period_calendar` links pay groups and pay periods; its two foreign
-  keys form its composite primary key.
-- An `employee` may have many `leave_record`, `time_entry`, `allowance`, and
-  `deduction` records.
-- `allowance_type` and `deduction_type` describe the categories used by
-  `allowance` and `deduction`. Employee eligibility and enrollment records link
-  employees to those types over effective-date intervals.
-- Each `allowance` and `deduction` references an employee, a type, and a pay
-  period.
-- Each `payroll_input` references one employee and one pay period.
-  `payroll_input_source` links it to exactly one recorded source among a time
-  entry, leave record, allowance, or deduction. The schema does not declare a
-  composite foreign key to ensure that the linked source belongs to the same
-  employee or pay period as the payroll input.
-- A `validation_run` references a pay period. An `exception` references a
-  validation run and validation rule, and may reference a payroll input.
-- An `approval` references a pay period and may reference a validation run.
-- A `payroll_export` references a pay period and may reference an approval.
-  `payroll_export_line` links an export to payroll inputs and employees; a
-  payroll input can appear at most once in a given export.
-- `state_event` stores entity type and ID as text but has no foreign key to the
-  entities it describes.
+- **PayGroup N:M PayPeriod**: `paygroup_period_calendar` links both parents
+  and uses (`pay_group_id`, `period_id`) as its primary key.
+- **Employee 1:N TimeEntry and LeaveRecord**:
+  `time_entry.employee_id` and `leave_record.employee_id` reference employee.
+- **Employee 1:N Allowance and Deduction**: their `employee_id` columns
+  reference employee.
+- **Employee+Period 1:1 PayrollInput**: the input references employee and
+  period, and `UNIQUE(employee_id, period_id)` permits at most one row for a
+  pair.
+- **PayrollInput N:M source records**: `payroll_input_source` stores one row
+  per input, source type, and source ID. Its FK points to the payroll input;
+  its generic `source_id` has no FK to the different possible source tables.
+- **AllowanceType 1:N Allowance** and **DeductionType 1:N Deduction**: each
+  transaction references one catalog type.
+- **Employee N:M AllowanceType/DeductionType over time**:
+  `employee_allowance_eligibility` and `employee_deduction_enrollment`
+  provide effective-dated bridge records. Their respective composite keys
+  include `effective_from`.
+- **LeaveRecord 1:N Deduction (optional per deduction)**:
+  `deduction.source_leave_id` is nullable and references a leave record.
+- **ValidationRun 1:N Exception** and **ValidationRule 1:N Exception**:
+  each exception references one run and one rule.
+- **Approval 1:N Exception (optional per exception)**:
+  `exception.approval_id` is nullable. The schema does not restrict its use
+  to waivers.
+- **PayrollExport 1:N PayrollExportLine**: each line references one export;
+  the line's composite key allows a given payroll input once in that export.
+- **PayrollInput 1:N PayrollExportLine**: each line references one input.
+- **Approval targets and StateEvent entities are polymorphic**: their
+  `target_type`/`target_id` or `entity_type`/`entity_id` fields do not have a
+  direct FK to every possible target table.
 
-## Clarifications needed
+## Uniqueness and indexes
 
-- The schema does not define permitted `leave_type` or `input_type` values, or
-  the exact relationship between payroll-input types and source types.
-- The schema does not define the allowed values or identity format for
-  `state_event.entity_type` or `state_event.actor`.
-- The schema does not specify currency, the minor-unit scale, or a timezone
-  convention for timestamps.
-- The schema does not enforce that a payroll input's source belongs to the same
-  employee or pay period, nor that an export line's employee matches its
-  payroll input.
-- Text primary-key columns are not explicitly declared `NOT NULL`. SQLite's
-  legacy rowid-table behavior can permit `NULL` for such primary keys; whether
-  this is intended should be clarified.
-- `payroll_input_source` has no primary key. Its partial unique indexes prevent
-  duplicate links by source type, but there is no declared row identifier.
+Declared unique constraints:
+
+- `pay_group.name`
+- `allowance_type.name`
+- `deduction_type.name`
+- `payroll_input(employee_id, period_id)`
+
+Composite primary keys also enforce uniqueness for
+`paygroup_period_calendar(pay_group_id, period_id)`,
+`employee_allowance_eligibility(employee_id, allowance_type_id, effective_from)`,
+`employee_deduction_enrollment(employee_id, deduction_type_id, effective_from)`,
+`payroll_input_source(payroll_input_id, source_type, source_id)`, and
+`payroll_export_line(export_id, payroll_input_id)`.
+
+Declared non-unique indexes:
+
+| Index | Columns |
+|---|---|
+| `idx_employee_pay_group_status` | `employee(pay_group_id, status)` |
+| `idx_employee_employment_type` | `employee(employment_type)` |
+| `idx_time_entry_employee_period_status` | `time_entry(employee_id, period_id, status)` |
+| `idx_time_entry_date` | `time_entry(work_date)` |
+| `idx_leave_employee_period_status` | `leave_record(employee_id, period_id, status)` |
+| `idx_allowance_employee_period_status` | `allowance(employee_id, period_id, status)` |
+| `idx_deduction_employee_period_status` | `deduction(employee_id, period_id, status)` |
+| `idx_payroll_input_period_status` | `payroll_input(period_id, status)` |
+| `idx_payroll_input_source_record` | `payroll_input_source(source_type, source_id)` |
+| `idx_validation_rule_active_severity` | `validation_rule(active, severity)` |
+| `idx_exception_rule_status` | `exception(rule_id, status)` |
+| `idx_exception_employee_period` | `exception(employee_id, period_id)` |
+| `idx_exception_approval` | `exception(approval_id)` |
+| `idx_approval_target` | `approval(target_type, target_id)` |
+| `idx_payroll_export_group_period` | `payroll_export(pay_group_id, period_id, status)` |
+| `idx_payroll_export_line_input` | `payroll_export_line(payroll_input_id)` |
+| `idx_state_event_entity` | `state_event(entity_type, entity_id, occurred_at)` |
+
+These are implementation indexes; Section 7 does not prescribe index names or
+an exhaustive index list.
+
+## Lifecycle states and enforcement
+
+Section 7 defines these lifecycle paths:
+
+- **TimeEntry**: `DRAFT` → `SUBMITTED` → `APPROVED` or `REJECTED`;
+  `APPROVED` → `SUPERSEDED` on correction.
+- **PayrollInput**: `AGGREGATED` → `VALIDATED` or `BLOCKED` →
+  `APPROVED` → `EXPORTED`.
+- **Exception**: `OPEN` → `ACKNOWLEDGED` → `RESOLVED` or `WAIVED`;
+  `OPEN` → `SUPERSEDED` on rerun.
+- **PayrollExport**: `CREATED` → `RELEASED`.
+
+`CHECK` constraints on `time_entry`, `payroll_input`, `exception`, and
+`payroll_export` restrict their status values to those shown above. These
+checks do **not** enforce transition order. State changes should be recorded in
+`state_event`; its triggers prevent updates and deletes to the event history.
+
+Other `CHECK`-constrained domains and values are listed with their columns.
+For status columns where the schema has no status `CHECK`, the allowed values
+remain unspecified and are not inferred here.
+
+## Ground truth boundary
+
+The blueprint requires ground truth to remain separate from the operational
+database. The schema contains no ground-truth table. Ground-truth files belong
+in the separate `ground_truth/` directory, not in this database.
