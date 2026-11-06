@@ -107,3 +107,52 @@
 | data/seed/pay_groups.csv | `670f953555fd2a696ef4a94824d15d946c78f14d49b70a017ac299a3ab16dbc9` |
 | ground_truth/labels.csv | `af89ff3aa34e97997c320ec142bb1bde7924c7ebfc43bd4ee0a005ae6c757883` |
 | paygate.db | `72391f2cc4564e9cd653df8c193a304213d3436e34447fdc9b925c55300ca70c` |
+
+## Module 7 detection scorecard — starter dataset
+
+The scorecard was calculated from validation run `RUN-000001` after running the
+validation engine against a temporary copy of `data/module3-starter/paygate.db`.
+The original dataset database and labels were read-only inputs and were not
+modified. The dataset has 16 ground-truth rows: 13 `FLAG` planted issues and
+3 `PASS` boundary controls.
+
+| Metric | Result |
+|---|---:|
+| Total planted issues (`FLAG`) | 13 |
+| Total detected findings (TP + FP) | 84 |
+| TP | 13 |
+| FP | 71 |
+| FN | 0 |
+| Precision | 0.1548 |
+| Recall | 1.0000 |
+| F1 | 0.2680 |
+
+| Issue type | Planted | TP | FP | FN |
+|---|---:|---:|---:|---:|
+| Hours exceed period maximum | 3 | 3 | 0 | 0 |
+| Duplicate allowance | 2 | 2 | 0 | 0 |
+| Unapproved time exported | 1 | 1 | 0 | 0 |
+| Leave deduction applied twice | 2 | 2 | 0 | 0 |
+| Reconciliation failure | 1 | 1 | 0 | 0 |
+| Missing bank details | 1 | 1 | 0 | 0 |
+| Missing tax ID | 1 | 1 | 0 | 0 |
+| Duplicate hours | 1 | 1 | 0 | 0 |
+| Outlier hours | 1 | 1 | 0 | 0 |
+
+The three `PASS` controls were not counted as planted issues, and none matched
+a finding in this run. Of the 71 findings without an exact `FLAG` match, 27
+were secondary detections in an employee-period containing another planted
+issue, 44 were unlabelled findings, and none matched a `PASS` control. By rule,
+the classifications were:
+
+| Rule | Secondary detection | Unlabelled finding | Known-negative detection | Total |
+|---|---:|---:|---:|---:|
+| VR-004 | 1 | 0 | 0 | 1 |
+| VR-005 | 26 | 42 | 0 | 68 |
+| VR-011 | 0 | 2 | 0 | 2 |
+
+These are descriptive categories only. The strict metric results above remain
+13 TP, 71 FP, and 0 FN; secondary detections are not reclassified as true
+positives. An unlabelled finding is an FP relative to available labels, not an
+independently adjudicated error. See [TESTING.md](./TESTING.md) for matching
+rules and classification precedence.

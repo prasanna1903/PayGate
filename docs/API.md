@@ -23,6 +23,9 @@ The operation atomically writes the `approval` row, changes the input to
 
 Request:
 
+Abbreviated response example (category maps and unmatched summaries can contain
+additional entries):
+
 ```json
 {
   "approver_id": "HR-SYNTHETIC-01",
@@ -142,3 +145,132 @@ exception, or time-entry identifier where applicable.
 
 Response (`200`) has the same shape as the export response, including all
 export lines and totals. An unknown export returns `404`.
+
+## Retrieve the evaluation scorecard
+
+`GET /evaluation/scorecard`
+
+Returns metrics for the latest persisted validation run in the API's configured
+database, compared with the configured dataset's ground-truth CSV. The endpoint
+is read-only. It does not execute validation or modify operational records.
+When no validation run exists, the endpoint returns `409`. A missing labels
+file returns `404`; malformed labels or manifests return `400`.
+
+The response contains the overall metrics and breakdowns by rule, issue type,
+and severity, plus unmatched record summaries. It deliberately omits ground-
+truth IDs and employee/entity identifiers. Local evaluator results include
+those IDs for diagnosis; do not expose that unredacted service result directly
+to external clients.
+
+The endpoint's database and ground-truth paths are selected when creating the
+application. The default application uses configured `DB_PATH` and
+`GROUND_TRUTH_DIR`; an output-directory dataset can be bound using
+`create_app(database_path=..., ground_truth_path=..., manifest_path=...)`.
+
+The following is an abbreviated response example; unmatched finding arrays are
+summaries and may contain more entries than shown.
+
+```json
+{
+  "dataset": {
+    "identifier": "module3-starter",
+    "size": "starter",
+    "employee_count": 200,
+    "seed": 20261022
+  },
+  "validation_run_id": "RUN-000001",
+  "overall": {
+    "total_planted_issues": 13,
+    "total_detected_issues": 84,
+    "tp": 13,
+    "fp": 71,
+    "fn": 0,
+    "precision": 0.15476190476190477,
+    "recall": 1.0,
+    "f1": 0.2680412371134021
+  },
+  "by_rule_id": {
+    "VR-001": {
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "planted_issues": 1,
+      "negative_controls": 0
+    }
+  },
+  "by_issue_type": {
+    "missing_bank": {
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "planted_issues": 1,
+      "negative_controls": 0
+    }
+  },
+  "by_severity": {
+    "High": {
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "planted_issues": 1,
+      "negative_controls": 0
+    }
+  },
+  "unmatched_finding_classification": {
+    "total": 71,
+    "by_category": {
+      "secondary_detection": 27,
+      "unlabelled_finding": 44,
+      "known_negative_detection": 0
+    },
+    "by_rule_id": {
+      "VR-004": {
+        "secondary_detection": 1,
+        "unlabelled_finding": 0,
+        "known_negative_detection": 0,
+        "total": 1
+      },
+      "VR-005": {
+        "secondary_detection": 26,
+        "unlabelled_finding": 42,
+        "known_negative_detection": 0,
+        "total": 68
+      },
+      "VR-011": {
+        "secondary_detection": 0,
+        "unlabelled_finding": 2,
+        "known_negative_detection": 0,
+        "total": 2
+      }
+    }
+  },
+  "unmatched_ground_truth": [],
+  "unmatched_findings": [
+    {
+      "rule_id": "VR-005",
+      "entity_type": "time_entry",
+      "severity": "Medium",
+      "classification": "secondary_detection"
+    }
+  ]
+}
+```
+
+`total_detected_issues` is TP + FP. A finding matches at most one planted
+label, and excess findings for that label count as false positives. Ground-
+truth `PASS` rows are negative controls, not planted issues; a finding matching
+one is a false positive. Unmatched-finding categories are additional
+descriptions, not metric reclassifications: same-period findings for another
+planted issue are `secondary_detection`, findings with no related planted issue
+are `unlabelled_finding`, and exact `PASS` matches are
+`known_negative_detection`. See [TESTING.md](./TESTING.md) for formulas and
+matching details.
