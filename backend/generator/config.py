@@ -12,6 +12,20 @@ DEFAULT_EMPLOYEE_COUNT = 3000
 DEFAULT_PAY_PERIODS = ("PP-2026-01", "PP-2026-02", "PP-2026-03")
 DEFAULT_DATABASE_PATH = Path("./data/paygate.db")
 DEFAULT_GROUND_TRUTH_DIR = Path("./ground_truth")
+DEFAULT_ANOMALY_PLAN = (
+    ("hours_exceed_period_max", 40),
+    ("duplicate_allowance", 30),
+    ("unapproved_time_exported", 15),
+    ("leave_deduction_applied_twice", 25),
+    ("totals_fail_to_reconcile", 10),
+    ("missing_bank", 15),
+    ("missing_tax", 15),
+    ("duplicate_hours", 15),
+    ("outlier_hours", 15),
+    ("boundary_exact_max_hours", 10),
+    ("boundary_legitimate_correction", 10),
+    ("boundary_legitimate_resubmission", 10),
+)
 
 _PAY_PERIOD_PATTERN = re.compile(r"PP-(\d{4})-(\d{2})\Z")
 
@@ -25,6 +39,7 @@ class GeneratorConfig:
     pay_periods: tuple[str, ...]
     database_path: Path
     ground_truth_dir: Path
+    anomaly_plan: tuple[tuple[str, int], ...] = DEFAULT_ANOMALY_PLAN
 
 
 def _read_integer(

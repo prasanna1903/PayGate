@@ -1,0 +1,7 @@
+name,employment_type,pay_frequency,assignment_weight,hourly_rate_min_minor,hourly_rate_max_minor,max_hours_per_period,max_hours_per_day,ot_multiplier,cutoff_days_before_end,pay_days_after_month_start,allowance_uptake_factor
+hourly-ops,hourly,monthly,0.40,1800,3400,184,12,1.5,3,4,1.00
+hourly-shift,hourly,monthly,0.40,2200,4200,184,12,1.75,4,5,1.15
+hourly-field,hourly,monthly,0.20,2000,3800,184,12,1.5,5,6,0.90
+salaried-corp,salaried,monthly,0.50,3200,6200,184,12,1.5,6,7,0.80
+salaried-field,salaried,monthly,0.30,3200,6200,184,12,1.5,7,8,0.95
+salaried-ops,salaried,monthly,0.20,2200,4200,184,12,1.5,8,9,0.75
