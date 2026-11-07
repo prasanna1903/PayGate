@@ -18,4 +18,5 @@ data/module3-starter/
 data/module3-full/
 data/module3-repro/
 data/paygate-ui-test.db
-
+data/paygate-starter/
+data/.paygate-starter-setup-*/

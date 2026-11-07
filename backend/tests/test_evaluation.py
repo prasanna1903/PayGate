@@ -15,6 +15,8 @@ from fastapi.testclient import TestClient
 
 import backend.api.app as app_module
 from backend.api.app import create_app
+from backend.generator.config import load_config
+from backend.generator.generate import generate_dataset
 from backend.evaluation.scorecard import (
     EvaluationError,
     GROUND_TRUTH_COLUMNS,
@@ -495,8 +497,13 @@ def test_starter_dataset_integration_uses_copy_and_persisted_validation_findings
     from backend.db.connection import get_connection
     from backend.services.validation_engine import run_validation
 
-    dataset_root = Path(__file__).parents[2] / "data" / "module3-starter"
-    source_database = dataset_root / "paygate.db"
+    dataset_root = tmp_path / "module3-starter"
+    generated_dataset = generate_dataset(
+        config=load_config(environment={}),
+        employee_count=200,
+        output_dir=dataset_root,
+    )
+    source_database = generated_dataset.database_path
     copy_path = tmp_path / "paygate.db"
     shutil.copy2(source_database, copy_path)
     connection = get_connection(copy_path)
@@ -505,8 +512,8 @@ def test_starter_dataset_integration_uses_copy_and_persisted_validation_findings
         connection.commit()
         result = evaluate_dataset(
             copy_path,
-            dataset_root / "ground_truth" / "labels.csv",
-            manifest_path=dataset_root / "manifest.json",
+            generated_dataset.ground_truth_path,
+            manifest_path=generated_dataset.manifest_path,
             run_id=validation_result.run_id,
         )
     finally:
