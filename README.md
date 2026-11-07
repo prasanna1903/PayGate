@@ -278,3 +278,108 @@ and testing. The developer reviewed the implementation and verified it with
 backend tests and a frontend production build. See
 [`AI_PROMPT_HISTORY.md`](./AI_PROMPT_HISTORY.md) for representative prompt
 themes. They are summaries, not a verbatim or exhaustive historical record.
+## How to Run PayGate (Windows)
+
+Follow these steps to run PayGate from a fresh GitHub clone. Run all commands from the project root — the folder that contains `backend`, `frontend`, `scripts`, and `requirements.txt`.
+
+### 1. Prerequisites
+
+Install these tools before starting:
+
+- **Git** — to clone the repository.
+- **Python** — use a version compatible with the dependencies in `requirements.txt`.
+- **Node.js and npm** — required to install and run the React frontend.
+- **Windows PowerShell**.
+
+Check that the commands are available:
+
+```powershell
+git --version
+python --version
+node --version
+npm --version
+```
+
+### 2. Clone the repository
+
+Open PowerShell and run:
+
+```powershell
+git clone https://github.com/prasanna1903/PayGate.git
+cd PayGate
+```
+
+If you cloned the repository into a different location, change into that cloned `PayGate` folder before continuing.
+
+### 3. Set up PayGate
+
+Run this once from the project root:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\scripts\setup.ps1
+```
+
+The setup script prepares the local Python environment, installs the project dependencies, installs frontend dependencies, and prepares the starter database and generated data according to the repository setup process.
+
+Wait for the script to finish. If it reports an error, resolve that error before starting either server.
+
+### 4. Start the backend
+
+Open a PowerShell terminal and make sure its current directory is the cloned project root. Run:
+
+```powershell
+.\scripts\start-backend.ps1
+```
+
+The backend API is available at:
+
+- **API base:** http://127.0.0.1:8000
+- **Interactive API documentation (Swagger):** http://127.0.0.1:8000/docs
+
+Keep this terminal open while using PayGate.
+
+### 5. Start the frontend
+
+Open a second PowerShell terminal. Change into the same cloned project root (the folder containing `scripts`) and run:
+
+```powershell
+.\scripts\start-frontend.ps1
+```
+
+Open the application in your browser:
+
+- **PayGate web application:** http://localhost:5173
+
+Keep both backend and frontend terminals running. To stop either server, press `Ctrl+C` in its terminal.
+
+### 6. Run tests and build checks
+
+From the project root, run the backend test suite:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+Build the frontend for production:
+
+```powershell
+npm --prefix frontend run build
+```
+
+### 7. Quick troubleshooting
+
+- **`scripts\setup.ps1` not found:** You are not in the project root. Run `Get-Location` and `Get-ChildItem`; change to the cloned folder containing `backend`, `frontend`, and `scripts`.
+- **PowerShell blocks the setup script:** Run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` in that PowerShell window, then retry the setup command.
+- **Port 8000 or 5173 is already in use:** Another process is using the default port. Stop the other application or follow the startup script's error message; do not terminate an unknown process.
+- **Frontend cannot reach the API:** Confirm the backend terminal is still running and that the API responds at http://127.0.0.1:8000/docs.
+- **Setup fails:** Read the first error reported by the setup script. Do not repeatedly rerun setup or delete an existing database without checking the error first.
+
+### Application URLs
+
+| Component | URL |
+|---|---|
+| PayGate frontend | http://localhost:5173 |
+| Backend API | http://127.0.0.1:8000 |
+| Swagger API documentation | http://127.0.0.1:8000/docs |
+
