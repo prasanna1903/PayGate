@@ -5,6 +5,49 @@ project's default database path). `backend.api.app:app` is the ASGI application;
 `create_app(database_path)` can be used to bind an application to a specific
 database, including an isolated test database.
 
+## Dashboard and validation data
+
+The dashboard uses these additional operational routes. List endpoints are
+paginated (`limit` 1–200, default 50; `offset` default 0) and do not read
+ground-truth files.
+
+### `GET /dashboard/summary`
+
+Returns employee, payroll-input, latest-run finding, blocked-input, and
+released-export counts; latest run metadata; pay-group/period combinations
+from `paygroup_period_calendar`; and up to five recent exports. `latest_validation_run`
+is `null` until validation has run. The finding count is scoped to the latest
+persisted run.
+
+### `GET /payroll-inputs`
+
+Returns paginated payroll inputs with employee ID/name, pay group, period,
+hours, net amount in integer minor units, and status. Optional `status` is an
+exact status filter; optional `query` searches input ID, employee ID/name, and
+period ID.
+
+### `GET /exceptions`
+
+Returns paginated exception records with rule name/ID, severity, blocking flag,
+status, entity and employee/period context, evidence JSON, and the original
+validation event message when recorded. Optional `status` is an exact status
+filter; `query` searches exception/rule/entity/employee/period IDs. The schema
+does not store a recommended-next-step field, so the API does not synthesize
+one.
+
+### `POST /validation/runs`
+
+Runs the existing validation engine with trigger `manual` and returns the
+persisted run ID, timestamp, findings and evidence, plus blocked and validated
+payroll-input IDs. This uses the same operational validation engine; it does
+not read evaluation labels.
+
+The Vite development frontend defaults to a same-origin `/api` proxy to the
+local API. Direct cross-origin frontend deployments are permitted by default
+from `http://localhost:5173` and `http://127.0.0.1:5173`; configure the
+comma-separated `PAYGATE_CORS_ORIGINS` environment variable with the exact
+trusted origins for deployment.
+
 All amounts are integer minor units. Approval and waiver requests record the
 provided actor identity in the audit tables. The current project has no
 authentication provider, so these identity fields are recorded but are not

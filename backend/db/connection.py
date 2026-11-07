@@ -6,6 +6,6 @@ from pathlib import Path
 
 def get_connection(database_path: str | Path) -> sqlite3.Connection:
     """Open a SQLite connection with foreign-key enforcement enabled."""
-    connection = sqlite3.connect(database_path)
+    connection = sqlite3.connect(database_path, check_same_thread=False)
     connection.execute("PRAGMA foreign_keys = ON")
     return connection

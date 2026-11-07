@@ -8,5 +8,14 @@ __pycache__/
 !.env.example
 node_modules/
 dist/
+*.tsbuildinfo
 *.db
 *.sqlite
+data/module8-local/
+
+# Generated local datasets and databases
+data/module3-starter/
+data/module3-full/
+data/module3-repro/
+data/paygate-ui-test.db
+

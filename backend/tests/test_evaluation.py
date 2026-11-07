@@ -7,10 +7,13 @@ import json
 import shutil
 import sqlite3
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from fastapi import APIRouter
 from fastapi.testclient import TestClient
 
+import backend.api.app as app_module
 from backend.api.app import create_app
 from backend.evaluation.scorecard import (
     EvaluationError,
@@ -451,6 +454,39 @@ def test_evaluation_endpoint_redacts_label_and_employee_identifiers(tmp_path):
     body = response.text
     assert "GT-000001" not in body
     assert "EMP-000001" not in body
+
+
+def test_configured_labels_csv_precedes_size_specific_ground_truth(
+    monkeypatch, tmp_path
+):
+    ground_truth_dir = tmp_path / "configured-ground-truth"
+    ground_truth_dir.mkdir()
+    labels_path = ground_truth_dir / "labels.csv"
+    labels_path.touch()
+    (ground_truth_dir / "full_labels.csv").touch()
+    selected_paths: dict[str, Path] = {}
+
+    monkeypatch.setattr(
+        app_module,
+        "load_config",
+        lambda: SimpleNamespace(
+            employee_count=3000, ground_truth_dir=ground_truth_dir
+        ),
+    )
+
+    def capture_evaluation_router(
+        _database_path, ground_truth_path, _manifest_path
+    ):
+        selected_paths["ground_truth"] = Path(ground_truth_path)
+        return APIRouter()
+
+    monkeypatch.setattr(
+        app_module, "create_evaluation_router", capture_evaluation_router
+    )
+
+    app_module.create_app(tmp_path / "paygate-ui-test.db")
+
+    assert selected_paths["ground_truth"] == labels_path
 
 
 def test_starter_dataset_integration_uses_copy_and_persisted_validation_findings(

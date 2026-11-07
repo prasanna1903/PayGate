@@ -1,13 +1,16 @@
 """FastAPI application for PayGate workflow endpoints."""
 
+import os
 import sqlite3
 from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from backend.api.routers.dashboard import create_dashboard_router
 from backend.api.models import ErrorResponse
 from backend.api.routers.evaluation import create_evaluation_router
 from backend.api.routers.workflow import create_workflow_router
@@ -42,6 +45,7 @@ def create_app(
         ground_truth_candidates = (
             path.parent / "ground_truth" / "labels.csv",
             path.parent / "ground_truth" / f"{path.stem}_labels.csv",
+            config.ground_truth_dir / "labels.csv",
             config.ground_truth_dir / f"{dataset_size}_labels.csv",
         )
         selected_ground_truth = next(
@@ -53,6 +57,21 @@ def create_app(
             ground_truth_candidates[0],
         )
     app = FastAPI(title="PayGate API")
+    cors_origins = [
+        origin.strip()
+        for origin in os.environ.get(
+            "PAYGATE_CORS_ORIGINS",
+            "http://localhost:5173,http://127.0.0.1:5173",
+        ).split(",")
+        if origin.strip()
+    ]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins,
+        allow_methods=["GET", "POST"],
+        allow_headers=["Content-Type"],
+    )
+    app.include_router(create_dashboard_router(path))
     app.include_router(create_workflow_router(path))
     app.include_router(
         create_evaluation_router(
